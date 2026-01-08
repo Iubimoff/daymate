@@ -17,7 +17,7 @@ init(Req0, State) ->
 
 dispatch(<<"POST">>, <<"/timer">>, Args, QsMap) ->
     daymate_timer_api:create_timer(Args);
-dispatch(<<"GET">>, <<"/timers">>, Args, QsMap) ->
-    daymate_timer_api:list_timers();
+dispatch(<<"GET">>, <<"/timers">>, _, QsMap) ->
+    daymate_timer_api:list_timers(QsMap);
 dispatch(_, _, _, _) ->
     {error, undefined_path}.

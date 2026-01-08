@@ -10,8 +10,19 @@
 -export([list_timers/1]).
 
 -define(CREATE, <<
-    "INSERT INTO timers(id, created, date_end, duration, title, description) "
-    "VALUES (?, ?, ?, ?, ?, ?)"
+    "INSERT INTO timers(id, created, date_end, hours, minutes, seconds, "
+        "title, description) "
+    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+>>).
+
+-define(GET_TIMERS_BY_TITLE, <<
+    "SELECT * FROM timers "
+    "WHERE title = ?"
+>>).
+
+-define(LIST_TIMERS, <<
+    "SELECT * FROM timers "
+    "ORDER BY created DESC"
 >>).
 
 init() ->
@@ -33,7 +44,23 @@ create_timer(Args) ->
         [0, 0, 0] ->
             {error, <<"Incorrect duration.">>};
         _ ->
-            check_if_ws_process_exist_and_create(Hours, Minutes, Seconds, Title, Description)
+            check_if_title_exist(Hours, Minutes, Seconds, Title, Description)
+    end.
+
+check_if_title_exist(Hours, Minutes, Seconds, Title, Description) ->
+    case daymate_db:select(?GET_TIMERS_BY_TITLE, [Title]) of
+        [] ->
+            check_if_ws_process_exist_and_create(Hours, Minutes, Seconds,
+                Title, Description);
+        _ ->
+            #{
+                <<"status">> => <<"error">>,
+                <<"message">> => <<"This title already exist">>,
+                <<"description">> => Description,
+                <<"hours">> => Hours,
+                <<"minutes">> => Minutes,
+                <<"seconds">> => Seconds
+            }
     end.
 
 check_if_ws_process_exist_and_create(Hours, Minutes, Seconds, Title, Description) ->
@@ -43,9 +70,11 @@ check_if_ws_process_exist_and_create(Hours, Minutes, Seconds, Title, Description
             DurationSec = Hours * 3600 + Minutes * 60 + Seconds,
             Created = erlang:system_time(second),
             DateEnd = Created + DurationSec,
-            Params = [TimerId, Created, DateEnd, DurationSec, Title, Description],
+            Params = [TimerId, Created, DateEnd, Hours, Minutes,
+                Seconds, Title, Description],
             _ = daymate_db:insert(?CREATE, Params),
-            erlang:send_after(DurationSec * 1000, ?MODULE, {timer_fired, TimerId}),
+            TimerData = {timer_fired, TimerId, Title, Description},
+            erlang:send_after(DurationSec * 1000, ?MODULE, TimerData),
             #{<<"status">> => <<"ok">>, <<"timer_id">> => TimerId};
         {error, no_process} ->
             #{
@@ -54,11 +83,38 @@ check_if_ws_process_exist_and_create(Hours, Minutes, Seconds, Title, Description
             };
         {error, undefined_ets_table} ->
             ok = daymate_ws_handler:init(),
-            check_if_ws_process_exist_and_create(Hours, Minutes, Seconds, Title, Description)
+            check_if_ws_process_exist_and_create(Hours, Minutes, Seconds,
+                Title, Description)
     end.
 
 list_timers(Args) ->
-    #{<<"key">> => <<"value">>}.
+    case daymate_db:select(?LIST_TIMERS, []) of
+        [] ->
+            #{
+                <<"status">> => <<"ok">>,
+                <<"timers">> => []
+            };
+        TimersLists ->
+            Timers = format_list_timers(TimersLists),
+            #{
+                <<"status">> => <<"ok">>,
+                <<"timers">> => Timers
+            }
+    end.
+
+format_list_timers([]) ->
+    [];
+format_list_timers(ListsTimers) ->
+    [
+        #{
+            <<"hours">> => Hours,
+            <<"minutes">> => Minutes,
+            <<"seconds">> => Seconds,
+            <<"title">> => Title,
+            <<"description">> => Description
+        }
+    || [TimerId, Created, DateEnd, Hours, Minutes,
+        Seconds, Title, Description] <- TimersLists].
 
 handle_call(_Request, _From, State) ->
     {reply, ignored, State}.
@@ -66,9 +122,11 @@ handle_call(_Request, _From, State) ->
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
-handle_info({timer_fired, TimerId}, State) ->
+handle_info({timer_fired, TimerId, Title, Description}, State) ->
     daymate_ws_handler:send(#{
         event => <<"timer_fired">>,
-        timer_id => TimerId
+        timer_id => TimerId,
+        title => Title,
+        description => Description
     }),
     {noreply, State}.

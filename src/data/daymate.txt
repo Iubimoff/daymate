@@ -2,7 +2,9 @@ CREATE TABLE IF NOT EXISTS timers (
     id TEXT PRIMARY KEY,
     created INTEGER NOT NULL,
     date_end INTEGER NOT NULL,
-    duration INTEGER,
+    hours INTEGER,
+    minutes INTEGER,
+    seconds INTEGER,
     title TEXT,
     description TEXT
 );
