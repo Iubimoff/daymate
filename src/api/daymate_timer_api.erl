@@ -8,6 +8,7 @@
 
 -export([create_timer/1]).
 -export([list_timers/1]).
+-export([get_timer/1]).
 
 -define(CREATE, <<
     "INSERT INTO timers(id, created, date_end, hours, minutes, seconds, "
@@ -23,6 +24,11 @@
 -define(LIST_TIMERS, <<
     "SELECT * FROM timers "
     "ORDER BY created DESC"
+>>).
+
+-define(GET_TIMER_BY_ID, <<
+    "SELECT * FROM timers "
+    "WHERE id = ?"
 >>).
 
 init() ->
@@ -42,7 +48,7 @@ create_timer(Args) ->
     Seconds = maps:get(<<"seconds">>, Args, 0),
     case [Hours, Minutes, Seconds] of
         [0, 0, 0] ->
-            {error, <<"Incorrect duration.">>};
+            {error, #{<<"message">> => <<"Incorrect duration.">>}};
         _ ->
             check_if_title_exist(Hours, Minutes, Seconds, Title, Description)
     end.
@@ -53,14 +59,13 @@ check_if_title_exist(Hours, Minutes, Seconds, Title, Description) ->
             check_if_ws_process_exist_and_create(Hours, Minutes, Seconds,
                 Title, Description);
         _ ->
-            #{
-                <<"status">> => <<"error">>,
+            {error, #{
                 <<"message">> => <<"This title already exist">>,
                 <<"description">> => Description,
                 <<"hours">> => Hours,
                 <<"minutes">> => Minutes,
                 <<"seconds">> => Seconds
-            }
+            }}
     end.
 
 check_if_ws_process_exist_and_create(Hours, Minutes, Seconds, Title, Description) ->
@@ -75,31 +80,22 @@ check_if_ws_process_exist_and_create(Hours, Minutes, Seconds, Title, Description
             _ = daymate_db:insert(?CREATE, Params),
             TimerData = {timer_fired, TimerId, Title, Description},
             erlang:send_after(DurationSec * 1000, ?MODULE, TimerData),
-            #{<<"status">> => <<"ok">>, <<"timer_id">> => TimerId};
+            {ok, #{<<"timer_id">> => TimerId}};
         {error, no_process} ->
-            #{
-                <<"status">> => <<"error">>,
-                <<"message">> => <<"Websocket doesn't connect.">>
-            };
+            {error, #{<<"message">> => <<"Websocket doesn't connect.">>}};
         {error, undefined_ets_table} ->
             ok = daymate_ws_handler:init(),
             check_if_ws_process_exist_and_create(Hours, Minutes, Seconds,
                 Title, Description)
     end.
 
-list_timers(Args) ->
+list_timers(_) ->
     case daymate_db:select(?LIST_TIMERS, []) of
         [] ->
-            #{
-                <<"status">> => <<"ok">>,
-                <<"timers">> => []
-            };
+            {ok, #{<<"timers">> => []}};
         TimersLists ->
             Timers = format_list_timers(TimersLists),
-            #{
-                <<"status">> => <<"ok">>,
-                <<"timers">> => Timers
-            }
+            {ok, #{<<"timers">> => Timers}}
     end.
 
 format_list_timers([]) ->
@@ -111,10 +107,21 @@ format_list_timers(ListsTimers) ->
             <<"minutes">> => Minutes,
             <<"seconds">> => Seconds,
             <<"title">> => Title,
-            <<"description">> => Description
+            <<"description">> => Description,
+            <<"id">> => TimerId
         }
-    || [TimerId, Created, DateEnd, Hours, Minutes,
-        Seconds, Title, Description] <- TimersLists].
+    || [TimerId, _, _, Hours, Minutes,
+        Seconds, Title, Description] <- ListsTimers].
+
+get_timer(Args) ->
+    TimerId = maps:get(<<"id">>, Args),
+    case daymate_db:select(?GET_TIMER_BY_ID, [TimerId]) of
+        [] ->
+            {error, #{<<"message">> => <<"Unknown timer">>}};
+        Result ->
+            [Timer] = format_list_timers(Result),
+            {ok, #{<<"timer">> => Timer}}
+    end.
 
 handle_call(_Request, _From, State) ->
     {reply, ignored, State}.
